@@ -44,6 +44,8 @@ export const processPrelude = _m.processPrelude
 export const createWebInlinedDataStream = _m.createWebInlinedDataStream
 export const createNodeInlinedDataStream = _m.createNodeInlinedDataStream
 export const createPendingStream = _m.createPendingStream
+export const createRenderInBrowserAbortSignal =
+  _m.createRenderInBrowserAbortSignal
 export const createOnHeadersCallback = _m.createOnHeadersCallback
 export const resumeAndAbort = _m.resumeAndAbort
 export const renderToWebFlightStream = _m.renderToWebFlightStream

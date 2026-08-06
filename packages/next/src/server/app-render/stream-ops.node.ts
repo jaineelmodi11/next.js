@@ -538,6 +538,7 @@ function createRootLayoutValidatorTransform(): Transform {
 // ---------------------------------------------------------------------------
 
 export { renderToWebFlightStream } from './stream-ops.web'
+export { createRenderInBrowserAbortSignal } from './stream-ops.web'
 
 export function renderToNodeFlightStream(
   ComponentMod: FlightComponentMod,

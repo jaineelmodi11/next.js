@@ -7,6 +7,7 @@
  * allowing the switcher to assign either module without `as unknown as`.
  */
 
+import { browser } from 'react-dom'
 import type { PostponedState, PrerenderOptions } from 'react-dom/static'
 import { resume, renderToReadableStream } from 'react-dom/server'
 import { prerender } from 'react-dom/static'
@@ -28,6 +29,7 @@ import {
 import { createInlinedDataReadableStream } from './use-flight-response'
 import { processPrelude as webProcessPrelude } from './app-render-prerender-utils'
 import type { AnyStream as AnyStreamType } from './app-render-prerender-utils'
+import { BailoutToCSRError } from '../../shared/lib/lazy-dynamic/bailout-to-csr'
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -213,6 +215,24 @@ export function createNodeInlinedDataStream(
 
 export function createPendingStream(): AnyStream {
   return new ReadableStream<Uint8Array>()
+}
+
+/**
+ * Aborting a resumed render with a recoverable reason tells React to leave the
+ * postponed boundary for the browser instead of reporting a render error.
+ */
+export function createRenderInBrowserAbortSignal(
+  reactBrowserBailout: boolean
+): AbortSignal {
+  const controller = new AbortController()
+  const reason = 'Render in Browser'
+  if (reactBrowserBailout) {
+    // @ts-expect-error TODO: Update @types/react-dom to include the reason argument.
+    controller.abort(browser(reason))
+  } else {
+    controller.abort(new BailoutToCSRError(reason))
+  }
+  return controller.signal
 }
 
 export function createOnHeadersCallback(
