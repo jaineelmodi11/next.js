@@ -251,7 +251,6 @@ pub async fn collect_graph(graph: Vc<ModuleGraph>) -> Result<Vc<CollectedModules
 
         let ChunkingType::Emitted {
             merge_tag,
-            is_async,
             emit_to_all_entries,
         } = &ref_data.chunking_type
         else {
@@ -277,7 +276,6 @@ pub async fn collect_graph(graph: Vc<ModuleGraph>) -> Result<Vc<CollectedModules
                                 RefData {
                                     chunking_type: ChunkingType::Collected {
                                         merge_tag: merge_tag.clone(),
-                                        is_async: *is_async,
                                     },
                                     ..ref_data.clone()
                                 },
