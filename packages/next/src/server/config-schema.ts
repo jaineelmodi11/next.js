@@ -225,6 +225,7 @@ export const experimentalSchema = {
   clientParamParsingOrigins: z.array(z.string()).optional(),
   cachedNavigations: z.boolean().optional(),
   dynamicOnHover: z.boolean().optional(),
+  reactBrowserBailout: z.boolean().optional(),
   useOffline: z.boolean().optional(),
   optimisticRouting: z.boolean().optional(),
   concurrentRouterQueue: z.boolean().optional(),

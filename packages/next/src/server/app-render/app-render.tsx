@@ -7468,6 +7468,19 @@ async function validateInstantConfigs(
             />,
             {
               signal: reactSignal,
+              onBrowserBailout: (err: unknown, errorInfo: ErrorInfo) => {
+                if (!reactSignal.aborted) {
+                  const componentStack = errorInfo.componentStack
+                  if (typeof componentStack === 'string') {
+                    trackThrownErrorInNavigation(
+                      workStore,
+                      instantValidationState,
+                      err,
+                      componentStack
+                    )
+                  }
+                }
+              },
               onError: (err: unknown, errorInfo: ErrorInfo) => {
                 if (isPrerenderInterruptedError(err) || reactSignal.aborted) {
                   const componentStack = errorInfo.componentStack
