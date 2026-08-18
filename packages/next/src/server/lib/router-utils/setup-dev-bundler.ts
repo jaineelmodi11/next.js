@@ -31,6 +31,8 @@ import {
 import { getSortedRoutes } from '../../../shared/lib/router/utils'
 import { sortByPageExts } from '../../../build/sort-by-page-exts'
 import { normalizeCatchAllRoutes } from './normalize-catchall-routes'
+import { createSerializedAsyncCallback } from './serialized-async-callback'
+import { createDevRouteChangeCoordinator } from './dev-route-change-coordinator'
 import { verifyAndRunTypeScript } from '../../../lib/verify-typescript-setup'
 import { verifyPartytownSetup } from '../../../lib/verify-partytown-setup'
 import { getNamedRouteRegex } from '../../../shared/lib/router/utils/route-regex'
@@ -241,13 +243,34 @@ async function startWatcher(
   )
 
   const serverFields: ServerFields = {}
+  let hotReloader: NextJsHotReloaderInterface
+  const routeChangeCoordinator = opts.turbo
+    ? createDevRouteChangeCoordinator(({ added, removed }) => {
+        hotReloader.send({
+          type: HMR_MESSAGE_SENT_TO_BROWSER.DEV_PAGES_MANIFEST_UPDATE,
+          data: [{ devPagesManifest: true }],
+        })
+        for (const route of added) {
+          hotReloader.send({
+            type: HMR_MESSAGE_SENT_TO_BROWSER.ADDED_PAGE,
+            data: [route],
+          })
+        }
+        for (const route of removed) {
+          hotReloader.send({
+            type: HMR_MESSAGE_SENT_TO_BROWSER.REMOVED_PAGE,
+            data: [route],
+          })
+        }
+      })
+    : undefined
 
   // Update logging state once based on next.config.js when initializing
   consoleStore.setState({
     logging: nextConfig.logging !== false,
   })
 
-  const hotReloader: NextJsHotReloaderInterface = opts.turbo
+  hotReloader = opts.turbo
     ? await (async () => {
         const createHotReloaderTurbopack = (
           require('../../dev/hot-reloader-turbopack') as typeof import('../../dev/hot-reloader-turbopack')
@@ -258,7 +281,8 @@ async function startWatcher(
           distDir,
           resetFetch,
           lockfile,
-          opts.serverFastRefresh
+          opts.serverFastRefresh,
+          (routes) => routeChangeCoordinator!.updateBundler(routes)
         )
       })()
     : await (async () => {
@@ -437,20 +461,41 @@ async function startWatcher(
     let previousClientRouterFilters: any
     let previousConflictingPagePaths: Set<string> = new Set()
     let hadInitialScan = false
+    let updateScanCount = 0
     let previousDuplicatePagePaths: Set<string> = new Set()
 
     const routeTypesFilePath = path.join(distDir, 'types', 'routes.d.ts')
     const validatorFilePath = path.join(distDir, 'types', 'validator.ts')
 
     let initialWatchTime = performance.now() + performance.timeOrigin
-    wp.on('aggregated', async () => {
+    const processAggregate = async (
+      knownFiles: ReturnType<Watchpack['getTimeInfoEntries']>
+    ) => {
       const isInitialScan = !hadInitialScan
       hadInitialScan = true
+      let updateScanNumber: number | undefined
+      if (
+        !isInitialScan &&
+        process.env.__NEXT_TEST_MODE &&
+        (process.env.NEXT_TEST_DEV_ROUTE_FIRST_SCAN_DELAY_MS !== undefined ||
+          process.env.NEXT_TEST_DEV_ROUTE_SCAN_DELAY_MS !== undefined)
+      ) {
+        updateScanNumber = ++updateScanCount
+        const delayMs = Number(
+          updateScanNumber === 1
+            ? (process.env.NEXT_TEST_DEV_ROUTE_FIRST_SCAN_DELAY_MS ??
+                process.env.NEXT_TEST_DEV_ROUTE_SCAN_DELAY_MS)
+            : process.env.NEXT_TEST_DEV_ROUTE_SCAN_DELAY_MS
+        )
+        if (delayMs > 0) {
+          console.log(`[next-test] dev route scan ${updateScanNumber} paused`)
+          await new Promise((resume) => setTimeout(resume, delayMs))
+        }
+      }
       let writeEnvDefinitions = false
       let typescriptStatusFromLastAggregation = enabledTypeScript
       let middlewareMatchers: ProxyMatcher[] | undefined
       const routedPages: string[] = []
-      const knownFiles = wp.getTimeInfoEntries()
       const appPaths: Record<string, string[]> = {}
       const pageNameSet = new Set<string>()
       const conflictingAppPagePaths = new Set<string>()
@@ -464,6 +509,10 @@ async function startWatcher(
       const appRoutes: RouteInfo[] = []
       const layoutRoutes: RouteInfo[] = []
       const slots: SlotInfo[] = []
+      const appFiles = new Set<string>()
+      const pageFiles = new Set<string>()
+      const staticMetadataFiles = new Map<string, string>()
+      const nextDataRoutes = new Set<string>()
 
       let envFileChange = false
       let clientRouterFiltersChange = false
@@ -471,11 +520,6 @@ async function startWatcher(
       let conflictingPageChange = 0
       let hasRootAppNotFound = false
 
-      const { appFiles, pageFiles, staticMetadataFiles } = opts.fsChecker
-
-      appFiles.clear()
-      pageFiles.clear()
-      staticMetadataFiles.clear()
       devPageFiles.clear()
 
       const sortedKnownFiles: string[] = [...knownFiles.keys()].sort(
@@ -778,7 +822,7 @@ async function startWatcher(
 
           if (useFileSystemPublicRoutes) {
             pageFiles.add(pageName)
-            opts.fsChecker.nextDataRoutes.add(pageName)
+            nextDataRoutes.add(pageName)
           }
 
           const route = normalizePathSep(pageName)
@@ -1108,9 +1152,6 @@ async function startWatcher(
         }),
       ] satisfies Array<AppPageRouteDefinition | AppRouteRouteDefinition>
 
-      opts.fsChecker.setRouteDefinitions('pageFile', pageRouteDefinitions)
-      opts.fsChecker.setRouteDefinitions('appFile', appRouteDefinitions)
-
       // TODO: pass this to fsChecker/next-dev-server?
       serverFields.middleware = middlewareMatchers
         ? {
@@ -1180,7 +1221,7 @@ async function startWatcher(
         // before it has been built and is populated in the _buildManifest
         const sortedRoutes = getSortedRoutes(routedPages)
 
-        opts.fsChecker.dynamicRoutes = sortedRoutes.map(
+        const dynamicRoutes = sortedRoutes.map(
           (page): FilesystemDynamicRoute => {
             const regex = getNamedRouteRegex(page, {
               prefixRouteKeys: true,
@@ -1197,7 +1238,7 @@ async function startWatcher(
           }
         )
 
-        const dataRoutes: typeof opts.fsChecker.dynamicRoutes = []
+        const dataRoutes: FilesystemDynamicRoute[] = []
 
         for (const page of sortedRoutes) {
           const route = buildDataRoute(page, 'development')
@@ -1224,10 +1265,26 @@ async function startWatcher(
             }),
           })
         }
-        opts.fsChecker.dynamicRoutes.unshift(...dataRoutes)
+        opts.fsChecker.publishRouteSnapshot({
+          appFiles,
+          pageFiles,
+          staticMetadataFiles,
+          dynamicRoutes: [...dataRoutes, ...dynamicRoutes],
+          nextDataRoutes,
+          routeDefinitions: {
+            pageFile: pageRouteDefinitions,
+            appFile: appRouteDefinitions,
+          },
+        })
+        if (updateScanNumber !== undefined) {
+          console.log(
+            `[next-test] dev route scan ${updateScanNumber} published`
+          )
+        }
+        routeChangeCoordinator?.updateWatchpack(sortedRoutes)
 
-        // For Turbopack ADDED_PAGE and REMOVED_PAGE are implemented in hot-reloader-turbopack.ts
-        // in order to avoid a race condition where ADDED_PAGE and REMOVED_PAGE are sent before Turbopack picked up the file change.
+        // Turbopack route announcements are coordinated above with its
+        // committed entrypoints so neither producer can announce alone.
         if (!opts.turbo) {
           const sortedRoutesChanged =
             prevSortedRoutes.length !== sortedRoutes.length ||
@@ -1360,6 +1417,19 @@ async function startWatcher(
           Log.warn('Failed to reload dynamic routes:', e)
         }
       }
+    }
+    const handleAggregate = createSerializedAsyncCallback(processAggregate)
+    wp.on('aggregated', () => {
+      // Watchpack does not await async event listeners. Capture this event's
+      // view immediately, then process complete scans in aggregation order.
+      void handleAggregate(new Map(wp.getTimeInfoEntries())).catch((error) => {
+        if (!resolved) {
+          reject(error)
+          resolved = true
+        } else {
+          Log.warn('Failed to reload dynamic routes:', error)
+        }
+      })
     })
 
     wp.watch({ directories: [dir], startTime: 0 })
@@ -1384,7 +1454,7 @@ async function startWatcher(
       res.end(
         JSON.stringify({
           pages: prevSortedRoutes.filter(
-            (route) => !opts.fsChecker.appFiles.has(route)
+            (route) => !opts.fsChecker.hasAppFile(route)
           ),
         })
       )
