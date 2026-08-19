@@ -69,6 +69,7 @@ import {
 } from './stream-ops'
 import type { AnyStream } from './stream-ops'
 import { getInstantTestBootstrapScriptContent } from './instant-test-bootstrap'
+import { prependHistoryBootstrapScript } from './history-bootstrap'
 import { stripInternalQueries } from '../internal-utils'
 import {
   NEXT_HMR_REFRESH_HEADER,
@@ -3598,6 +3599,8 @@ async function renderToStream(
       (bootstrapScriptContent ? `${bootstrapScriptContent};` : '') +
       (await getInstantTestBootstrapScriptContent())
   }
+
+  bootstrapScriptContent = prependHistoryBootstrapScript(bootstrapScriptContent)
 
   // Create the "render route (app)" span manually so we can keep it open during streaming.
   // This is necessary because errors inside Suspense boundaries are reported asynchronously
@@ -8553,6 +8556,8 @@ async function prerenderToStream(
       `self.__next_r=${JSON.stringify(ctx.requestId ?? crypto.randomUUID())};` +
       bootstrapScriptContent
   }
+
+  bootstrapScriptContent = prependHistoryBootstrapScript(bootstrapScriptContent)
 
   const { reactServerErrorsByDigest } = workStore
   // We don't report errors during prerendering through our instrumentation hooks

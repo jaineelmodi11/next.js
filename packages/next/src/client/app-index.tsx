@@ -20,6 +20,10 @@ import {
   createMutableActionQueue,
 } from './components/app-router-instance'
 import AppRouter from './components/app-router'
+import {
+  getHistoryActivationUrl,
+  initializeHistoryBridge,
+} from './components/history-handlers'
 import type { InitialRSCPayload } from '../shared/lib/app-router-types'
 import { createInitialRouterState } from './components/router-reducer/create-initial-router-state'
 import { MissingSlotContext } from '../shared/lib/app-router-context.shared-runtime'
@@ -376,14 +380,22 @@ export async function hydrate(
   initializeRouterTransitionModules(instrumentationModules)
 
   const initialTimestamp = Date.now()
-  const actionQueue: AppRouterActionQueue = createMutableActionQueue(
-    createInitialRouterState({
-      navigatedAt: initialTimestamp,
-      initialRSCPayload,
-      initialFlightStreamForCache,
-      location: window.location,
-    })
-  )
+  const initialRouterState = createInitialRouterState({
+    navigatedAt: initialTimestamp,
+    initialRSCPayload,
+    initialFlightStreamForCache,
+    location: getHistoryActivationUrl(),
+  })
+  const historyStartup = initializeHistoryBridge({
+    tree: initialRouterState.tree,
+    renderedSearch: initialRouterState.renderedSearch,
+  })
+  if (historyStartup === 'reload') {
+    window.location.reload()
+    return
+  }
+  const actionQueue: AppRouterActionQueue =
+    createMutableActionQueue(initialRouterState)
 
   const reactEl = (
     <StrictModeIfEnabled>
@@ -400,9 +412,11 @@ export async function hydrate(
     </StrictModeIfEnabled>
   )
 
-  if (document.documentElement.id === '__next_error__') {
-    let element = reactEl
-    // Server rendering failed, fall back to client-side rendering
+  const isErrorPage = document.documentElement.id === '__next_error__'
+  let element = reactEl
+
+  if (isErrorPage) {
+    // Server rendering failed, fall back to client-side rendering.
     if (process.env.NODE_ENV !== 'production') {
       const { RootLevelDevOverlayElement } =
         require('../next-devtools/userspace/app/client-entry') as typeof import('../next-devtools/userspace/app/client-entry')
@@ -412,7 +426,9 @@ export async function hydrate(
         <RootLevelDevOverlayElement>{element}</RootLevelDevOverlayElement>
       )
     }
+  }
 
+  if (isErrorPage) {
     ReactDOMClient.createRoot(appElement, reactRootOptions).render(element)
   } else {
     React.startTransition(() => {
