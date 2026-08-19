@@ -1,4 +1,5 @@
-import { ThirdPartyPush } from './third-party-push'
+import { Suspense } from 'react'
+import { RouterUrl } from './router-url'
 
 export default function RootLayout({
   children,
@@ -8,7 +9,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ThirdPartyPush />
+        <Suspense>
+          <RouterUrl />
+        </Suspense>
         {children}
       </body>
     </html>
